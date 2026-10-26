@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Гучність з навушників</string>
+    <string name="accessibility_description">Перехоплює лише кнопки навушників «Наступний трек» і «Попередній трек», щоб довге натискання змінювало гучність. Не читає вміст екрана і нічого не надсилає в інтернет.</string>
+</resources>
