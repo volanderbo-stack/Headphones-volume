@@ -340,8 +340,8 @@ private fun OptionsCard(s: AppSettings, update: Update) {
             if (s.earbudHoldSkips) {
                 SwitchRow(
                     title = "Також при увімкненому екрані",
-                    subtitle = "Протягом 4 с після дотику до екрана зміна гучності вважається вашою (наприклад, " +
-                        "повзунком), і трек не перемикається. Потрібен крок 1 (Спеціальні можливості).",
+                    subtitle = "Одразу після дотику до екрана (2–3 с) зміна гучності вважається вашою, наприклад " +
+                        "повзунком, і трек не перемикається. Потрібен крок 1 (Спеціальні можливості).",
                     checked = s.earbudHoldScreenOn,
                 ) { value -> update { it.copy(earbudHoldScreenOn = value) } }
             }

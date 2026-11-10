@@ -24,7 +24,7 @@ data class AppSettings(
     /** Для навушників, що самі змінюють гучність при затисканні: таку зміну перетворювати на перемикання треку. */
     val earbudHoldSkips: Boolean = true,
     /** Те саме при увімкненому екрані (зміни гучності одразу після дотику до екрана не враховуються). */
-    val earbudHoldScreenOn: Boolean = false,
+    val earbudHoldScreenOn: Boolean = true,
     /** Рівень «½» нижче найменшої гучності. */
     val extraQuiet: Boolean = true,
     /** Наскільки рівень «½» тихіший за найменшу гучність. */
@@ -99,8 +99,8 @@ class SettingsRepository(context: Context) {
         val SWAP_BUTTONS = booleanPreferencesKey("swap_buttons")
         val SWAP_FUNCTIONS = booleanPreferencesKey("swap_functions")
         val EARBUD_HOLD_SKIPS = booleanPreferencesKey("earbud_hold_skips")
-        // Новий ключ: у версії 1.4 режим був увімкнений за замовчуванням, тепер вимкнений.
-        val EARBUD_HOLD_SCREEN_ON = booleanPreferencesKey("earbud_hold_screen_on_v2")
+        // Новий ключ: з версії 1.8 режим знову увімкнений за замовчуванням (затискання завжди перемикає трек).
+        val EARBUD_HOLD_SCREEN_ON = booleanPreferencesKey("earbud_hold_screen_on_v3")
         val EXTRA_QUIET = booleanPreferencesKey("extra_quiet")
         val EXTRA_QUIET_DB = intPreferencesKey("extra_quiet_db")
         val LOWEST_AUDIBLE = intPreferencesKey("lowest_audible")

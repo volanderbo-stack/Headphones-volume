@@ -54,12 +54,40 @@ object KeyRouter : PressListener {
     private const val DEVICE_QUIET_MS = 5_000L
 
     /** Скільки після дотику до екрана зміни гучності вважати ручними (наприклад, повзунком). */
-    private const val TOUCH_QUIET_MS = 4_000L
+    private const val TOUCH_QUIET_MS = 2_500L
+
+    /** Як часто під час затискання навушників перевіряти, чи вони знову не зсунули гучність. */
+    private const val HOLD_POLL_MS = 16L
+
+    /** Лише Bluetooth-навушники змінюють гучність телефону самі; з динаміком чи дротом це завжди користувач. */
+    private val BLUETOOTH_OUTPUTS = buildSet {
+        add(AudioDeviceInfo.TYPE_BLUETOOTH_A2DP)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) add(AudioDeviceInfo.TYPE_HEARING_AID)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            add(AudioDeviceInfo.TYPE_BLE_HEADSET)
+            add(AudioDeviceInfo.TYPE_BLE_SPEAKER)
+        }
+    }
 
     /** Чому зараз зміни гучності ігноруються: для журналу «Тесту». */
     private var quietReason = ""
 
+    /** Відстеження дотиків справді працює: без цього при увімкненому екрані жест не відрізнити від повзунка. */
+    private var touchSeen = false
+
+    private var holdWatching = false
+    private val holdWatch = object : Runnable {
+        override fun run() {
+            if (earbuds.holdTick(volume.current)) {
+                mainHandler.postDelayed(this, HOLD_POLL_MS)
+            } else {
+                holdWatching = false
+            }
+        }
+    }
+
     private lateinit var app: Context
+    private lateinit var audio: AudioManager
     private lateinit var volume: VolumeController
     private lateinit var player: PlayerController
     private lateinit var vibrator: Vibrator
@@ -98,6 +126,7 @@ object KeyRouter : PressListener {
             app.getSystemService(Vibrator::class.java)
         }
         power = app.getSystemService(PowerManager::class.java)
+        audio = app.getSystemService(AudioManager::class.java)
         scope.launch {
             SettingsRepository(app).settings.collect {
                 settings = it
@@ -136,7 +165,7 @@ object KeyRouter : PressListener {
             ContextCompat.RECEIVER_NOT_EXPORTED,
         )
         // Під час підключення навушників Android сам виставляє гучність: це не жест.
-        app.getSystemService(AudioManager::class.java).registerAudioDeviceCallback(
+        audio.registerAudioDeviceCallback(
             object : AudioDeviceCallback() {
                 override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>) {
                     quiet(DEVICE_QUIET_MS, "підключення навушників")
@@ -154,7 +183,10 @@ object KeyRouter : PressListener {
     }
 
     /** Користувач торкнувся екрана: найближчі зміни гучності, ймовірно, від повзунка. */
-    fun onScreenTouched() = quiet(TOUCH_QUIET_MS, "дотик до екрана")
+    fun onScreenTouched() {
+        touchSeen = true
+        quiet(TOUCH_QUIET_MS, "дотик до екрана")
+    }
 
     private fun quiet(ms: Long, reason: String) {
         quietReason = reason
@@ -164,11 +196,15 @@ object KeyRouter : PressListener {
     private fun onSystemVolumeChanged(prev: Int, new: Int) {
         val s = settings
         val testing = Diagnostics.testMode.value
+        val switchedOn = s.enabled && s.swapFunctions && s.earbudHoldSkips
+        val bluetooth = audio.getDevices(AudioManager.GET_DEVICES_OUTPUTS).any { it.type in BLUETOOTH_OUTPUTS }
         // При увімкненому екрані потрібне відстеження дотиків, щоб не сплутати з повзунком гучності.
-        val screenOk = !power.isInteractive ||
-            (s.earbudHoldScreenOn && Diagnostics.touchWatcherActive.value) || testing
-        val active = s.enabled && s.swapFunctions && s.earbudHoldSkips && screenOk
-        val outcome = earbuds.onVolumeChanged(prev, new, active)
+        val screenOk = !power.isInteractive || testing ||
+            (s.earbudHoldScreenOn && Diagnostics.touchWatcherActive.value && touchSeen)
+        val outcome = earbuds.onVolumeChanged(prev, new, active = switchedOn && bluetooth && screenOk)
+        if (outcome == EarbudVolumeDetector.Outcome.GESTURE || outcome == EarbudVolumeDetector.Outcome.CONTINUED) {
+            watchHold()
+        }
         // Гучність змінили інакше (кнопки телефону, повзунок): рівень «½» знімаємо.
         // Жест навушників повертає гучність назад, тож тоді «½» лишається.
         if (ExtraQuiet.active.value && new != ExtraQuiet.level &&
@@ -180,10 +216,23 @@ object KeyRouter : PressListener {
         when (outcome) {
             EarbudVolumeDetector.Outcome.QUIET ->
                 Diagnostics.logAction("Гучність $prev → $new після: $quietReason. Вважаю ручною зміною, пропускаю")
-            EarbudVolumeDetector.Outcome.INACTIVE ->
-                Diagnostics.logAction("Гучність $prev → $new змінили навушники, але «Затискання перемикає трек» вимкнено")
+            EarbudVolumeDetector.Outcome.INACTIVE -> {
+                val why = when {
+                    !switchedOn -> "«Затискання навушників перемикає трек» вимкнено"
+                    !bluetooth -> "Bluetooth-навушники не підключено"
+                    else -> "екран увімкнено, а режим для увімкненого екрана вимкнено"
+                }
+                Diagnostics.logAction("Гучність $prev → $new: трек не перемикаю, бо $why")
+            }
             else -> Unit
         }
+    }
+
+    /** Поки навушники тримають, перевіряємо гучність часто, щоб повертати її якнайшвидше. */
+    private fun watchHold() {
+        if (holdWatching) return
+        holdWatching = true
+        mainHandler.postDelayed(holdWatch, HOLD_POLL_MS)
     }
 
     private fun onEarbudGesture(button: MediaButton, from: Int, to: Int) {
@@ -198,6 +247,8 @@ object KeyRouter : PressListener {
     }
 
     private fun restoreVolume(value: Int) {
+        // Часта перевірка могла вже повернути гучність раніше за системне сповіщення.
+        if (volume.current == value) return
         earbuds.expectOwnChange(value)
         volume.set(value)
     }

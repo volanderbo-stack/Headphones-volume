@@ -24,6 +24,8 @@ class EarbudVolumeDetector(
     /** Застосунок сам ставить гучність [value]: така зміна не є жестом. */
     fun expectOwnChange(value: Int) {
         ownChanges += value to clock()
+        // Крок гучності посеред серії (коротке натискання одразу після затискання): тримаємо вже нову гучність.
+        if (baseline != null) baseline = value
     }
 
     /** Наступні [ms] мс зміни гучності не вважати жестами (кнопки телефону, підключення навушників). */
@@ -43,6 +45,8 @@ class EarbudVolumeDetector(
         if (prev == new) return Outcome.UNCHANGED
         if (now < quietUntil) {
             baseline = null
+            // Повзунок можуть тягнути довго: поки зміни йдуть одна за одною, вони й далі ручні.
+            quietUntil = maxOf(quietUntil, now + QUIET_EXTEND_MS)
             return Outcome.QUIET
         }
 
@@ -62,8 +66,28 @@ class EarbudVolumeDetector(
         return Outcome.GESTURE
     }
 
+    /**
+     * Часта перевірка під час серії: якщо навушники знову зсунули гучність, повертає її одразу,
+     * не чекаючи системного сповіщення. Повертає false, коли серія закінчилась і перевіряти більше не треба.
+     */
+    fun holdTick(current: Int): Boolean {
+        val pinned = baseline ?: return false
+        val now = clock()
+        if (now - lastChangeAt > BURST_GAP_MS) return false
+        if (now < quietUntil) {
+            baseline = null
+            return false
+        }
+        if (current != pinned) {
+            lastChangeAt = now
+            restore(pinned)
+        }
+        return true
+    }
+
     companion object {
         const val OWN_WINDOW_MS = 1_000L
         const val BURST_GAP_MS = 1_500L
+        const val QUIET_EXTEND_MS = 1_500L
     }
 }

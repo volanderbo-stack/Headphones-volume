@@ -84,8 +84,62 @@ class EarbudVolumeDetectorTest {
         detector.ignoreFor(1_500)
         time += 1_000
         assertEquals(Outcome.QUIET, detector.onVolumeChanged(8, 9, active = true))
-        time += 600
+        time += EarbudVolumeDetector.QUIET_EXTEND_MS + 1 // після ручної зміни тиша ще трохи триває
         assertEquals(Outcome.GESTURE, detector.onVolumeChanged(9, 10, active = true))
+    }
+
+    @Test
+    fun sliderDrag_keepsExtendingQuietPeriod() {
+        detector.ignoreFor(2_500) // дотик до екрана
+        repeat(10) { step ->
+            time += 1_000 // повзунок тягнуть 10 с, зміна щосекунди
+            assertEquals(Outcome.QUIET, detector.onVolumeChanged(8 + step, 9 + step, active = true))
+        }
+        assertEquals(emptyList<String>(), gestures)
+
+        time += EarbudVolumeDetector.QUIET_EXTEND_MS + 1
+        assertEquals(Outcome.GESTURE, detector.onVolumeChanged(18, 19, active = true))
+    }
+
+    @Test
+    fun holdTick_restoresBeforeSystemNotification() {
+        detector.onVolumeChanged(8, 9, active = true)
+        restores.clear()
+
+        time += 16
+        assertEquals(true, detector.holdTick(current = 8)) // гучність на місці: нічого не робимо
+        assertEquals(emptyList<Int>(), restores)
+
+        time += 16
+        assertEquals(true, detector.holdTick(current = 10)) // навушники знову зсунули
+        assertEquals(listOf(8), restores)
+        assertEquals(listOf("NEXT 8→9"), gestures) // трек удруге не перемикається
+    }
+
+    @Test
+    fun holdTick_stopsWhenBurstEnds() {
+        assertEquals(false, detector.holdTick(current = 8)) // серії немає
+        detector.onVolumeChanged(8, 9, active = true)
+        time += EarbudVolumeDetector.BURST_GAP_MS + 1
+        assertEquals(false, detector.holdTick(current = 12))
+        assertEquals(listOf(8), restores)
+    }
+
+    @Test
+    fun ownStepDuringBurst_becomesNewBaseline() {
+        detector.onVolumeChanged(8, 9, active = true) // затискання: тримаємо 8
+        time += 300
+        detector.expectOwnChange(10) // коротке натискання: застосунок сам ставить 10
+        assertEquals(Outcome.OWN, detector.onVolumeChanged(8, 10, active = true))
+        restores.clear()
+
+        time += 16
+        detector.holdTick(current = 10)
+        assertEquals(emptyList<Int>(), restores) // 10 не відкочуємо назад до 8
+
+        time += 300
+        detector.onVolumeChanged(10, 11, active = true) // навушники знову зсунули
+        assertEquals(listOf(10), restores)
     }
 
     @Test
